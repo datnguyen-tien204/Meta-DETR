@@ -1,5 +1,6 @@
 import copy
 import math
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -638,7 +639,13 @@ class MLP(nn.Module):
 
 def build(args):
 
-    if args.dataset_file in ['coco', 'coco_base']:
+    if args.dataset_file in ['zaic_base']:
+        import json
+        ann_file = Path('data/zaic_dataset_coco') / 'annotations' / 'train_coco.json'
+        with open(str(ann_file), 'r') as f:
+            data = json.load(f)
+        num_classes = len(data['categories']) + 1
+    elif args.dataset_file in ['coco', 'coco_base']:
         num_classes = 91
     elif args.dataset_file in ['voc', 'voc_base1', 'voc_base2', 'voc_base3']:
         num_classes = 21
@@ -689,3 +696,4 @@ def build(args):
 
     return model, criterion, postprocessors
 
+print("Đã thay thế nội dung file /kaggle/working/Meta-DETR/models/meta_detr.py")
