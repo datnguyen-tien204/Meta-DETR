@@ -33,12 +33,24 @@ class DetectionDataset(TvCocoDetection):
 
     def __getitem__(self, idx):
         img, target = super(DetectionDataset, self).__getitem__(idx)
-        target = [anno for anno in target if anno['category_id'] in self.activated_class_ids]
+        # Filter out annotations not in activated_class_ids
+        if self.activated_class_ids is not None:
+             target = [anno for anno in target if anno['category_id'] in self.activated_class_ids]
+        
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
             img, target = self._transforms(img, target)
+        
+        # Filter out images with no annotations after transforms
+        if 'boxes' in target and len(target['boxes']) == 0:
+            # Return a dummy sample or handle it as you see fit
+            # For simplicity, we can try to get the next sample
+            # This is not ideal but works for demonstration
+            # A better approach would be to filter these images out beforehand
+             return self.__getitem__((idx + 1) % len(self))
+
         if self.with_support:
             support_images, support_class_ids, support_targets = self.sample_support_samples(target)
             return img, target, support_images, support_class_ids, support_targets
@@ -68,26 +80,39 @@ class DetectionDataset(TvCocoDetection):
         positive_labels = target['labels'].unique()
         num_positive_labels = positive_labels.shape[0]
         positive_labels_list = positive_labels.tolist()
-        negative_labels_list = list(set(self.activated_class_ids) - set(positive_labels_list))
-
+        
+        # Filter negative_labels_list to only include classes that have at least one annotation
+        negative_labels_list = [
+            cls_id for cls_id in (set(self.activated_class_ids) - set(positive_labels_list))
+            if len(self.anns_by_class[cls_id]) > 0
+        ]
+        
+        sampled_labels_list = []
+        
         # Positive labels in a batch < TRAIN_NUM_POSITIVE_SUPP: we include additional labels as negative samples
         if num_positive_labels <= self.NUM_MAX_POS_SUPP:
-            sampled_labels_list = positive_labels_list
-            sampled_labels_list += random.sample(negative_labels_list, k=self.NUM_SUPP - num_positive_labels)
+            sampled_labels_list.extend(positive_labels_list)
+            num_neg_to_sample = self.NUM_SUPP - num_positive_labels
+            # Make sure not to sample more than available
+            num_neg_to_sample = min(num_neg_to_sample, len(negative_labels_list))
+            if num_neg_to_sample > 0:
+                sampled_labels_list.extend(random.sample(negative_labels_list, k=num_neg_to_sample))
         # Positive labels in a batch > TRAIN_NUM_POSITIVE_SUPP: remove some positive labels.
         else:
             sampled_positive_labels_list = random.sample(positive_labels_list, k=self.NUM_MAX_POS_SUPP)
-            sampled_negative_labels_list = random.sample(negative_labels_list, k=self.NUM_SUPP - self.NUM_MAX_POS_SUPP)
+            num_neg_to_sample = self.NUM_SUPP - self.NUM_MAX_POS_SUPP
+            num_neg_to_sample = min(num_neg_to_sample, len(negative_labels_list))
+            sampled_negative_labels_list = random.sample(negative_labels_list, k=num_neg_to_sample)
             sampled_labels_list = sampled_positive_labels_list + sampled_negative_labels_list
-            # -----------------------------------------------------------------------
-            # NOTE: There is no need to filter gt info at this stage.
-            #       Filtering is done when formulating the episodes.
-            # -----------------------------------------------------------------------
 
         support_images = []
         support_targets = []
         support_class_ids = []
         for class_id in sampled_labels_list:
+            # This check is now redundant due to pre-filtering but kept for safety
+            if not self.anns_by_class[class_id]:
+                continue
+            
             i = random.randint(0, len(self.anns_by_class[class_id]) - 1)
             support_target = self.anns_by_class[class_id][i]
             support_target = {'image_id': class_id, 'annotations': [support_target]}  # Actually it is class_id for key 'image_id' here
@@ -96,14 +121,18 @@ class DetectionDataset(TvCocoDetection):
             support_image, support_target = self.prepare(support_image, support_target)
             if self.support_transforms is not None:
                 org_support_target, org_support_image = support_target, support_image
-                while True:
+                # Retry loop to find a valid transformed sample
+                for _ in range(10): # Try up to 10 times
                     support_image, support_target = self.support_transforms(org_support_image, org_support_target)
-                    # Make sure the object is not deleted after transforms, and it is not too small (mostly cut off)
                     if support_target['boxes'].shape[0] == 1 and support_target['area'] >= org_support_target['area'] / 5.0:
                         break
+                else: # If loop finishes without break
+                    continue # Skip this support sample if a valid one can't be generated
+            
             support_images.append(support_image)
             support_targets.append(support_target)
             support_class_ids.append(class_id)
+            
         return support_images, torch.as_tensor(support_class_ids), support_targets
 
 
@@ -261,3 +290,5 @@ def build(args, img_folder, ann_file, image_set, activated_class_ids, with_suppo
                             cache_mode=args.cache_mode,
                             local_rank=get_local_rank(),
                             local_size=get_local_size())
+
+print("Đã thay thế nội dung file /kaggle/working/Meta-DETR/datasets/dataset.py")
