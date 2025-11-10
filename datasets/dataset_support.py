@@ -70,6 +70,8 @@ class SupportDataset(VisionDataset):
         targets = []
         class_ids = []
         for classid in self.activatedClassIds:
+            if self.classlendict[classid] == 0:
+                continue
             i = index % self.classlendict[classid]
             target = self.classid2anno[classid][i]
             target = {'image_id': classid, 'annotations': [target]}  # Actually it is class_id for key 'image_id' here
@@ -349,5 +351,24 @@ def build_support_dataset(image_set, args):
                                   cache_mode=args.cache_mode,
                                   local_rank=get_local_rank(),
                                   local_size=get_local_size())
+        
+        if args.dataset_file == 'zaic_base':
+            root = Path('data/zaic_dataset_coco')
+            # For support images, we use the same pool of training images
+            img_folder = root / "train2017"
+            import json
+            train_ann_file = root / 'annotations' / 'train_coco.json'
+            with open(str(train_ann_file), 'r') as f:
+                num_categories = len(json.load(f)['categories'])
+            ids = list(range(1, num_categories + 1))
+            ann_file = train_ann_file
+            return SupportDataset(img_folder, str(ann_file),
+                                  activatedClassIds=ids,
+                                  transforms=make_support_transforms(),
+                                  cache_mode=args.cache_mode,
+                                  local_rank=get_local_rank(),
+                                  local_size=get_local_size())
 
     raise ValueError
+
+print("Đã thay thế nội dung file /kaggle/working/Meta-DETR/datasets/dataset_support.py")
